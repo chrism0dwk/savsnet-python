@@ -83,7 +83,8 @@ def plotAllPred(data,predictions,species,condition,lag=None):
     nConditions = len(condition)
 
     fig,ax = plt.subplots(nConditions,nSpecies,sharex=True,figsize=(10,5))
-    
+    ax = np.atleast_2d(ax)
+
     for i in range(nConditions):
         for j in range(nSpecies):
             plotPrediction(ax[i,j], data[i][j].day, 
