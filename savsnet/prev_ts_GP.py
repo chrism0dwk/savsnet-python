@@ -156,7 +156,7 @@ if __name__=='__main__':
 
     for species in args.species:
         for condition in args.condition:
-            print ("Running GP smoother for condition '%s' in species '%s'" % (species, condition))
+            print ("Running GP smoother for condition '%s' in species '%s'" % (condition,species))
             d = extractData(data, species, condition)
             res = BinomGP(np.array(d.cases),np.array(d.N),
                           np.array(d.day), np.array(d.day),
