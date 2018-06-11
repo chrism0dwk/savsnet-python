@@ -141,11 +141,13 @@ if __name__=='__main__':
     parser = argparse.ArgumentParser(description='Fit Binomial GP timeseries model')
     parser.add_argument("data", nargs=1, type=str, 
                         help="Input data file with (at least) columns Date, Species, Consult_reason") 
-    parser.add_argument("-o", "--prefix", dest="prefix",nargs=1,type=str,
-                        help="Output file prefix.")
+    parser.add_argument("-o", "--prefix", dest="prefix",type=str,default=None,
+                        help="Output file prefix [optional].")
     parser.add_argument("-c", "--condition", dest="condition",nargs='+',type=str,
+                        required=True,
                         help="One or more space-separated conditions to analyse")
     parser.add_argument("-s", "--species", dest="species",nargs='+',type=str,
+                        required=True,
                         help="One or more space-separated species to analyse")
     parser.add_argument("-i", "--iterations", dest="iterations", type=int, 
                         default=5000, nargs=1,
@@ -161,7 +163,9 @@ if __name__=='__main__':
             res = BinomGP(np.array(d.cases),np.array(d.N),
                           np.array(d.day), np.array(d.day),
                           mcmc_iter=args.iterations[0])
-            filename = "%s_%s_%s.pkl" % (args.prefix[0], species, condition)
+            filename = "%s_%s.pkl" % (species, condition)
+            if args.prefix is not None:
+                filename = "%s_%s" % (args.prefix,filename)
             print ("Saving '%s'" % filename)
             with open(filename, 'wb') as f:
                 pickle.dump(res,f,pickle.HIGHEST_PROTOCOL)
