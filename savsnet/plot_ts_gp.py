@@ -10,7 +10,7 @@ import pickle
 from prev_ts_GP import extractData
 
 
-def plotPrediction(ax,X,y,N,pred,mindate,lag=None,plot_gp=False):
+def plotPrediction(ax,X,y,N,pred,mindate,lag=None,prev_mult=1,plot_gp=False):
     """Predictive time series plot with (by default) the prediction
     summarised as [0.01,0.05,0.5,0.95,0.99] quantiles, and observations colour-coded
     by tail-probability.
@@ -24,6 +24,7 @@ def plotPrediction(ax,X,y,N,pred,mindate,lag=None,plot_gp=False):
     pred -- 2D m x n array with numerical draws from posterior
     mindate -- a pandas.Timestamp representing the time origin wrt X
     lag     -- how many days prior to max(X) to plot
+    prev_mult -- prevalence multiplier (to get in, eg. prev per 1000 population)
     plot_gp -- plots a GP smudge-o-gram rather than 95% and 99% quantiles.
 
     Returns
@@ -40,10 +41,10 @@ def plotPrediction(ax,X,y,N,pred,mindate,lag=None,plot_gp=False):
     
     # Data
     x = np.array([mindate + pd.Timedelta(d,unit='D') for d in X[ts]])
-    pbar = np.array(y/N)[ts]
+    pbar = np.array(y/N)[ts] * prev_mult
 
     # Prediction quantiles
-    phat = pm.invlogit(pred['s_star'][:,ts]).eval()
+    phat = pm.invlogit(pred[:,ts]).eval() * prev_mult
     pctiles = np.percentile(phat, [1,5,50,95,99], axis=0)
 
     # Tail probabilities for observed p
@@ -89,20 +90,23 @@ def plotAllPred(data,predictions,species,condition,lag=None):
         for j in range(nSpecies):
             plotPrediction(ax[i,j], data[i][j].day, 
                            data[i][j].cases,data[i][j].N,
-                           predictions[i][j],
-                           np.min(data[i][j].date),lag=lag)
+                           predictions[i][j]['s_star'],
+                           np.min(data[i][j].date),lag=lag,prev_mult=1000)
             if i==0:
                 ax[i,j].set_title(species[j].capitalize())
             box = ax[i,j].get_position()
             ax[i,j].set_position([box.x0, box.y0, box.width, box.height*.7])
-            ax[i,j].yaxis.set_major_formatter(FormatStrFormatter('%.3f'))
+            ax[i,j].yaxis.set_major_formatter(FormatStrFormatter('%.0f'))
         ax[i,0].set(ylabel=condition[i].capitalize())
     
     fig.autofmt_xdate()
-    ax[nConditions-1,0].legend(ncol=3,loc='lower left',
-                               bbox_to_anchor=(.3,-1))
-    fig.tight_layout(rect=(0,0.1,1,1))
+    #ax[nConditions-1,0].legend(ncol=3,loc='lower left',
+    #                           bbox_to_anchor=(.3,-1))
+    fig.tight_layout(rect=(0.02,0.1,1,1))
     fig.subplots_adjust(hspace=0)
+    h,l = ax[0,0].get_legend_handles_labels()
+    fig.legend(handles=h,labels=l,loc='lower center',ncol=3)
+    fig.text(0.01,0.5,'Prevalence / 1000 consults', va='center', rotation='vertical',size='large')
     return fig,ax
     
 
@@ -128,8 +132,9 @@ if __name__ == '__main__':
         raise IndexError("len(posterior) does not equal len(species)*len(condition)")
     
     # Read data in
+    print ("Reading data")
     data = pd.read_csv(args.data[0])
-
+    print("Packaging data")
     # Construct data and prediction matrices
     predictionBlock = []
     dataBlock = []
@@ -143,9 +148,9 @@ if __name__ == '__main__':
         
         dataBlock.append(d)
         predictionBlock.append(p)
-            
+    print("Plotting data")
     fig,ax = plotAllPred(dataBlock,predictionBlock,args.species,args.condition,lag=args.lag)
-
+    print("Done")
     if args.output is not None:
         fig.savefig(args.output)
     else:
