@@ -95,11 +95,18 @@ def extractData(dat,species,condition):
       N     -- total number of cases seen weekly for species
 
     """
-    dat = dat[dat.Species==species]
-    dates = pd.DatetimeIndex(dat.Date)
-    minDate = np.min(dates)
-    week = (dates-minDate).days // 7
+    dat = dat.copy()[dat.Species==species]
+    dat.Date = pd.DatetimeIndex(dat.Date)
 
+    # Throw out recently added practices
+    byPractice = dat.groupby(['Practice_ID'])
+    firstAppear = byPractice['Date'].agg([['mindate','min']])
+    dat = pd.merge(dat, firstAppear, how='left', on='Practice_ID')
+    dat = dat[dat.mindate<'2018-06-01']
+
+    # Aggregate by week
+    minDate = np.min(dat.Date)
+    week = (pd.DatetimeIndex(dat.Date)-minDate).days // 7    
     dat = dat.groupby(week)
     aggTable = dat['Consult_reason'].agg([['cases',lambda x: np.sum(x==condition)],
                                           ['N',len]])
@@ -165,7 +172,7 @@ if __name__=='__main__':
                           mcmc_iter=args.iterations[0])
             filename = "%s_%s.pkl" % (species, condition)
             if args.prefix is not None:
-                filename = "%s_%s" % (args.prefix,filename)
+                filename = "%s%s" % (args.prefix,filename)
             print ("Saving '%s'" % filename)
             with open(filename, 'wb') as f:
                 pickle.dump(res,f,pickle.HIGHEST_PROTOCOL)
