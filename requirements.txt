@@ -1,0 +1,3 @@
+pandas
+theano
+pymc3

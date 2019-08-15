@@ -1,6 +1,7 @@
 #!/usr/bin/python -o
 # SAVSNet model
 
+import sys
 import pandas as pd
 import numpy as np
 import pymc3 as pm
@@ -9,7 +10,7 @@ import theano as t
 import theano.tensor.slinalg as tla
 
 
-def BinomGP(y, N, X, X_star,mcmc_iter,start={}):
+def BinomGP(y, N, X, prac_idx, X_star, mcmc_iter, start={}):
     """Fits a logistic Gaussian process regression timeseries model.
 
     Details
@@ -31,6 +32,7 @@ def BinomGP(y, N, X, X_star,mcmc_iter,start={}):
     y -- a vector of cases
     N -- a vector of number tested
     X -- a vector of times at which y is observed
+    T -- a vector of time since recruitment
     X_star -- a vector of times at which predictons are to be made
     start -- a dictionary of starting values for the MCMC.
 
@@ -38,32 +40,32 @@ def BinomGP(y, N, X, X_star,mcmc_iter,start={}):
     =======
     A tuple of (model,trace,pred) where model is a PyMC3 Model object, trace is a PyMC3 Multitrace object, and pred is a 5000 x X_star.shape[0] matrix of draws from the posterior predictive distribution of $\pi_t$.
     """
-
-    X = np.array(X)[:,None] # Inputs must be arranged as column vector
-    X_star = X_star[:,None]
+    prac_idx = np.array(prac_idx)
+    n_prac = np.unique(prac_idx).shape[0]
+    X = np.array(X)[:, None]  # Inputs must be arranged as column vector
+    X_star = X_star[:, None]
 
     model = pm.Model()
 
     with model:
-        
-        alpha      = pm.Normal('alpha',0, 1000, testval=0.)
-        beta       = pm.Normal('beta',0, 100, testval=0.)
-        sigmasq_s  = pm.Gamma('sigmasq_s',.1,.1,testval=0.1)
-        phi_s      = pm.Gamma('phi_s', 1., 1., testval=0.5)
-        tau2        = pm.Gamma('tau2',.1,.1,testval=0.1)
+        alpha = pm.Normal('alpha', 0, 1000, testval=0.)
+        beta = pm.Normal('beta', 0, 100, testval=0.)
+        sigmasq_s = pm.Gamma('sigmasq_s', .1, .1, testval=0.1)
+        phi_s = pm.Gamma('phi_s', 1., 1., testval=0.5)
+        tau2 = pm.Gamma('tau2', .1, .1, testval=0.1)
 
         # Construct GPs
-        cov_s = sigmasq_s * pm.gp.cov.Periodic(1,365.,phi_s)
+        cov_s = sigmasq_s * pm.gp.cov.Periodic(1, 365., phi_s)
         mean_f = pm.gp.mean.Linear(coeffs=beta, intercept=alpha)
-        gp_s = pm.gp.Latent(mean_func=mean_f,cov_func=cov_s)
-        
+        gp_s = pm.gp.Latent(mean_func=mean_f, cov_func=cov_s)
+
         cov_nugget = pm.gp.cov.WhiteNoise(tau2)
         nugget = pm.gp.Latent(cov_func=cov_nugget)
 
         gp = gp_s + nugget
         model.gp = gp
-        s = gp.prior('s',X=X)
-    
+        s = gp.prior('s', X=X)
+
         Y_obs = pm.Binomial('y_obs', N, pm.invlogit(s), observed=y)
 
         # Sample
@@ -72,12 +74,12 @@ def BinomGP(y, N, X, X_star,mcmc_iter,start={}):
                           start=start)
         # Predictions
         s_star = gp.conditional('s_star', X_star)
-        pred = pm.sample_ppc(trace, vars=[s_star,Y_obs])
+        pred = pm.sample_ppc(trace, vars=[s_star, Y_obs])
 
-        return (model,trace,pred)
+        return model, trace, pred
 
 
-def extractData(dat,species,condition):
+def extractData(dat, species, condition):
     """Extracts weekly records for 'condition' in 'species'.
 
     Parameters
@@ -95,27 +97,34 @@ def extractData(dat,species,condition):
       N     -- total number of cases seen weekly for species
 
     """
-    dat = dat.copy()[dat.Species==species]
+    dat = dat.copy()[dat['Species'] == species]
     dat.Date = pd.DatetimeIndex(dat.Date)
 
-    # Throw out recently added practices
-    byPractice = dat.groupby(['Practice_ID'])
-    firstAppear = byPractice['Date'].agg([['mindate','min']])
-    dat = pd.merge(dat, firstAppear, how='left', on='Practice_ID')
-    dat = dat[dat.mindate<'2018-06-01']
+    # # Throw out recently added practices
+    # byPractice = dat.groupby(['Practice_ID'])
+    # firstAppear = byPractice['Date'].agg([['mindate','min']])
+    # dat = pd.merge(dat, firstAppear, how='left', on='Practice_ID')
+    # dat = dat[dat.mindate<'2018-06-01']
 
-    # Aggregate by week
+    # Turn date into days, and quantize into weeks
     minDate = np.min(dat.Date)
-    week = (pd.DatetimeIndex(dat.Date)-minDate).days // 7    
-    dat = dat.groupby(week)
-    aggTable = dat['Consult_reason'].agg([['cases',lambda x: np.sum(x==condition)],
-                                          ['N',len]])
+    day = ((pd.DatetimeIndex(dat.Date) - minDate).days // 7) * 7
+    day.name = 'Day'
+    dat['day'] = day
 
-    aggTable['day']  = aggTable.index * 7
-    aggTable['date'] = [minDate + pd.Timedelta(dt*7, unit='D') for dt in aggTable.index]
-    
-    return (aggTable)
+    # Calculate the earliest day for each practice
+    day0 = dat.groupby(dat['Practice_ID'])['day'].agg([['day0', np.min]])
 
+    # Now group by Practice/day combination
+    dat = dat.groupby(by=[dat['Practice_ID'], day])
+    aggTable = dat['Consult_reason'].agg([['cases', lambda x: np.sum(x == condition)],
+                                          ['N', len]])
+    aggTable = aggTable.reset_index()
+    aggTable['date'] = [minDate + pd.Timedelta(dt, unit='D') for dt in aggTable['Day']]
+    aggTable = pd.merge(aggTable, day0, how='left', on='Practice_ID')
+    aggTable['time_since_recruitment'] = aggTable['Day'] - aggTable['day0']
+    aggTable['Practice_ID'] = aggTable['Practice_ID'].astype('category')
+    return aggTable
 
 
 def predProb(y, ystar):
@@ -135,28 +144,23 @@ def predProb(y, ystar):
     return q
 
 
-
-
-
-
-
-if __name__=='__main__':
+if __name__ == '__main__':
 
     import argparse
     import pickle
 
     parser = argparse.ArgumentParser(description='Fit Binomial GP timeseries model')
-    parser.add_argument("data", nargs=1, type=str, 
-                        help="Input data file with (at least) columns Date, Species, Consult_reason") 
-    parser.add_argument("-o", "--prefix", dest="prefix",type=str,default=None,
+    parser.add_argument("data", nargs=1, type=str,
+                        help="Input data file with (at least) columns Date, Species, Consult_reason")
+    parser.add_argument("-o", "--prefix", dest="prefix", type=str, default=None,
                         help="Output file prefix [optional].")
-    parser.add_argument("-c", "--condition", dest="condition",nargs='+',type=str,
+    parser.add_argument("-c", "--condition", dest="condition", nargs='+', type=str,
                         required=True,
                         help="One or more space-separated conditions to analyse")
-    parser.add_argument("-s", "--species", dest="species",nargs='+',type=str,
+    parser.add_argument("-s", "--species", dest="species", nargs='+', type=str,
                         required=True,
                         help="One or more space-separated species to analyse")
-    parser.add_argument("-i", "--iterations", dest="iterations", type=int, 
+    parser.add_argument("-i", "--iterations", dest="iterations", type=int,
                         default=5000, nargs=1,
                         help="Number of MCMC iterations (default 5000)")
     args = parser.parse_args()
@@ -165,14 +169,20 @@ if __name__=='__main__':
 
     for species in args.species:
         for condition in args.condition:
-            print ("Running GP smoother for condition '%s' in species '%s'" % (condition,species))
+            print("Running GP smoother for condition '%s' in species '%s'" % (condition, species))
+            sys.stdout.write("Extracting data...")
+            sys.stdout.flush()
             d = extractData(data, species, condition)
-            res = BinomGP(np.array(d.cases),np.array(d.N),
-                          np.array(d.day), np.array(d.day),
+            sys.stdout.write("done\nCalculating...")
+            sys.stdout.flush()
+            res = BinomGP(np.array(d.cases), np.array(d.N),
+                          np.array(d.Day), np.array(d.Practice_ID.cat.codes), np.array(d.Day),
                           mcmc_iter=args.iterations[0])
+            sys.stdout.write("done\n")
+            sys.stdout.flush()
             filename = "%s_%s.pkl" % (species, condition)
             if args.prefix is not None:
-                filename = "%s%s" % (args.prefix,filename)
-            print ("Saving '%s'" % filename)
+                filename = "%s%s" % (args.prefix, filename)
+            print("Saving '%s'" % filename)
             with open(filename, 'wb') as f:
-                pickle.dump(res,f,pickle.HIGHEST_PROTOCOL)
+                pickle.dump(res, f, pickle.HIGHEST_PROTOCOL)
