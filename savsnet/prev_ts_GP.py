@@ -40,8 +40,8 @@ def BinomGP(y, N, X, prac_idx, X_star, mcmc_iter, start={}):
     =======
     A tuple of (model,trace,pred) where model is a PyMC3 Model object, trace is a PyMC3 Multitrace object, and pred is a 5000 x X_star.shape[0] matrix of draws from the posterior predictive distribution of $\pi_t$.
     """
-    prac_idx = np.array(prac_idx)
     n_prac = np.unique(prac_idx).shape[0]
+    print(f"Received {n_prac} practices")
     X = np.array(X)[:, None]  # Inputs must be arranged as column vector
     X_star = X_star[:, None]
 
@@ -62,9 +62,12 @@ def BinomGP(y, N, X, prac_idx, X_star, mcmc_iter, start={}):
         cov_nugget = pm.gp.cov.WhiteNoise(tau2)
         nugget = pm.gp.Latent(cov_func=cov_nugget)
 
+        sigma_u = pm.HalfNormal('sigma_u', 5.)
+        u = pm.Normal('u', alpha, sigma_u, shape=n_prac)
+
         gp = gp_s + nugget
         model.gp = gp
-        s = gp.prior('s', X=X)
+        s = gp.prior('s', X=X) + u[prac_idx]
 
         Y_obs = pm.Binomial('y_obs', N, pm.invlogit(s), observed=y)
 
