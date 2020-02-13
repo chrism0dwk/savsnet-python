@@ -10,7 +10,15 @@ import theano as t
 import theano.tensor.slinalg as tla
 
 
-def BinomGP(y, N, X, prac_idx, X_star, mcmc_iter, start={}):
+def match(x, y):
+    """Returns the positions of the first occurrence of values of x in y."""
+    def indexof(a, b):
+        i = np.where(b == a)[0]
+        return i if i.shape[0] > 0 else [np.nan]
+    return np.concatenate([indexof(xx, y) for xx in x])
+
+
+def BinomGP(y, N, X, prac_id, X_star, mcmc_iter, start={}):
     """Fits a logistic Gaussian process regression timeseries model.
 
     Details
@@ -40,24 +48,28 @@ def BinomGP(y, N, X, prac_idx, X_star, mcmc_iter, start={}):
     =======
     A tuple of (model,trace,pred) where model is a PyMC3 Model object, trace is a PyMC3 Multitrace object, and pred is a 5000 x X_star.shape[0] matrix of draws from the posterior predictive distribution of $\pi_t$.
     """
+
     n_prac = np.unique(prac_idx).shape[0]
     print(f"Received {n_prac} practices")
+
     X = np.array(X)[:, None]  # Inputs must be arranged as column vector
-    X_star = X_star[:, None]
+    X = X - np.mean(X) # Center covariates
+    T = np.unique(X)
+    prac_unique = np.unique(prac_id)
 
     model = pm.Model()
 
     with model:
         alpha = pm.Normal('alpha', 0, 1000, testval=0.)
         beta = pm.Normal('beta', 0, 100, testval=0.)
-        sigmasq_s = pm.Gamma('sigmasq_s', .1, .1, testval=0.1)
-        phi_s = pm.Gamma('phi_s', 1., 1., testval=0.5)
-        tau2 = pm.Gamma('tau2', .1, .1, testval=0.1)
+        sigmasq_s = pm.HalfNormal('sigmasq_s', 5., testval=0.1)
+        phi_s = 0.16 #pm.HalfNormal('phi_s', 5., testval=0.5)
+        tau2 = pm.HalfNormal('tau2', 5., testval=0.1)
 
         # Construct GPs
         cov_s = sigmasq_s * pm.gp.cov.Periodic(1, 365., phi_s)
         mean_f = pm.gp.mean.Linear(coeffs=beta, intercept=alpha)
-        gp_s = pm.gp.Latent(mean_func=mean_f, cov_func=cov_s)
+        gp_t = pm.gp.Latent(mean_func=mean_f, cov_func=cov_s)
 
         cov_nugget = pm.gp.cov.WhiteNoise(tau2)
         nugget = pm.gp.Latent(cov_func=cov_nugget)
@@ -74,9 +86,10 @@ def BinomGP(y, N, X, prac_idx, X_star, mcmc_iter, start={}):
         # Sample
         trace = pm.sample(mcmc_iter,
                           chains=1,
-                          start=start)
+                          start=start,
+                          tune=500)
         # Predictions
-        s_star = gp.conditional('s_star', X_star)
+        s_star = gp_t.conditional('s_star', T[:, None])
         pred = pm.sample_ppc(trace, vars=[s_star, Y_obs])
 
         return model, trace, pred
@@ -102,7 +115,7 @@ def extractData(dat, species, condition):
     """
     dat = dat.copy()[dat['Species'] == species]
     dat.Date = pd.DatetimeIndex(dat.Date)
-
+    dat = dat[dat.Date > '2016-08-01']
     # # Throw out recently added practices
     # byPractice = dat.groupby(['Practice_ID'])
     # firstAppear = byPractice['Date'].agg([['mindate','min']])

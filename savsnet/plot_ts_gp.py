@@ -88,7 +88,7 @@ def plotAllPred(data,predictions,species,condition,lag=None):
 
     for i in range(nConditions):
         for j in range(nSpecies):
-            plotPrediction(ax[i,j], data[i][j].day, 
+            plotPrediction(ax[i,j], data[i][j].Day,
                            data[i][j].cases,data[i][j].N,
                            predictions[i][j]['s_star'],
                            np.min(data[i][j].date),lag=lag,prev_mult=1000)
