@@ -49,9 +49,6 @@ def BinomGP(y, N, X, prac_id, X_star, mcmc_iter, start={}):
     A tuple of (model,trace,pred) where model is a PyMC3 Model object, trace is a PyMC3 Multitrace object, and pred is a 5000 x X_star.shape[0] matrix of draws from the posterior predictive distribution of $\pi_t$.
     """
 
-    n_prac = np.unique(prac_idx).shape[0]
-    print(f"Received {n_prac} practices")
-
     X = np.array(X)[:, None]  # Inputs must be arranged as column vector
     X = X - np.mean(X) # Center covariates
     T = np.unique(X)
@@ -67,27 +64,37 @@ def BinomGP(y, N, X, prac_id, X_star, mcmc_iter, start={}):
         tau2 = pm.HalfNormal('tau2', 5., testval=0.1)
 
         # Construct GPs
-        cov_s = sigmasq_s * pm.gp.cov.Periodic(1, 365., phi_s)
-        mean_f = pm.gp.mean.Linear(coeffs=beta, intercept=alpha)
-        gp_t = pm.gp.Latent(mean_func=mean_f, cov_func=cov_s)
+        cov_t = sigmasq_s * pm.gp.cov.Periodic(1, 365., phi_s)
+        mean_t = pm.gp.mean.Linear(coeffs=beta, intercept=alpha)
+        gp_t = pm.gp.Latent(mean_func=mean_t, cov_func=cov_t)
 
-        cov_nugget = pm.gp.cov.WhiteNoise(tau2)
-        nugget = pm.gp.Latent(cov_func=cov_nugget)
+        #cov_nugget = pm.gp.cov.WhiteNoise(tau2)
+        #nugget = pm.gp.Latent(cov_func=cov_nugget)
 
-        sigma_u = pm.HalfNormal('sigma_u', 5.)
-        u = pm.Normal('u', alpha, sigma_u, shape=n_prac)
+        s_t = gp_t.prior('gp_t', X=T[:, None]) # + nugget
 
-        gp = gp_s + nugget
-        model.gp = gp
-        s = gp.prior('s', X=X) + u[prac_idx]
+        u = pm.Normal('u', mu=0., sd=1., shape=prac_unique.shape[0])
+        u_i = tt.sqrt(tau2) * u
+
+        s = s_t[match(X.flatten(), T)] + u_i[match(prac_id, prac_unique)]
 
         Y_obs = pm.Binomial('y_obs', N, pm.invlogit(s), observed=y)
 
         # Sample
+        step_u = pm.Metropolis([u])
+        step_gp_t = pm.Metropolis([s_t])
+        step_tau2 = pm.Metropolis([tau2, sigmasq_s])
+        step_beta = pm.Metropolis([alpha, beta])
         trace = pm.sample(mcmc_iter,
                           chains=1,
                           start=start,
-                          tune=500)
+                          tune=500,
+                          step=[step_u, step_gp_t, step_tau2, step_beta],
+                          #max_tree_depth=6,
+                          #early_max_treedepth=4,
+                          #t0=100,
+                          #target_accept=0.99,
+                          adapt_step_size=True)
         # Predictions
         s_star = gp_t.conditional('s_star', T[:, None])
         pred = pm.sample_ppc(trace, vars=[s_star, Y_obs])
@@ -116,11 +123,8 @@ def extractData(dat, species, condition):
     dat = dat.copy()[dat['Species'] == species]
     dat.Date = pd.DatetimeIndex(dat.Date)
     dat = dat[dat.Date > '2016-08-01']
-    # # Throw out recently added practices
-    # byPractice = dat.groupby(['Practice_ID'])
-    # firstAppear = byPractice['Date'].agg([['mindate','min']])
-    # dat = pd.merge(dat, firstAppear, how='left', on='Practice_ID')
-    # dat = dat[dat.mindate<'2018-06-01']
+    dat = dat[dat.Date <= '2019-08-01']
+
 
     # Turn date into days, and quantize into weeks
     minDate = np.min(dat.Date)
