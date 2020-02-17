@@ -1,3 +1,7 @@
+numpy
+matplotlib
+rasterio
+geopandas
 pandas
 theano
 pymc3
