@@ -9,6 +9,7 @@ import theano.tensor as tt
 import theano as t
 import theano.tensor.slinalg as tla
 
+__refdate = pd.to_datetime('2000-01-01')
 
 def match(x, y):
     """Returns the positions of the first occurrence of values of x in y."""
@@ -18,7 +19,7 @@ def match(x, y):
     return np.concatenate([indexof(xx, y) for xx in x])
 
 
-def BinomGP(y, N, X, prac_id, X_star, mcmc_iter, start={}):
+def BinomGP(y, N, time, time_pred, mcmc_iter, start={}):
     """Fits a logistic Gaussian process regression timeseries model.
 
     Details
@@ -48,12 +49,9 @@ def BinomGP(y, N, X, prac_id, X_star, mcmc_iter, start={}):
     =======
     A tuple of (model,trace,pred) where model is a PyMC3 Model object, trace is a PyMC3 Multitrace object, and pred is a 5000 x X_star.shape[0] matrix of draws from the posterior predictive distribution of $\pi_t$.
     """
-
-    X = np.array(X)[:, None]  # Inputs must be arranged as column vector
-    X = X - np.mean(X) # Center covariates
-    T = np.unique(X)
-    prac_unique = np.unique(prac_id)
-
+    time = np.array(time)[:, None]  # Inputs must be arranged as column vector
+    offset = np.mean(time)
+    time = time - offset  # Center time
     model = pm.Model()
 
     with model:
@@ -61,48 +59,38 @@ def BinomGP(y, N, X, prac_id, X_star, mcmc_iter, start={}):
         beta = pm.Normal('beta', 0, 100, testval=0.)
         sigmasq_s = pm.HalfNormal('sigmasq_s', 5., testval=0.1)
         phi_s = 0.16 #pm.HalfNormal('phi_s', 5., testval=0.5)
-        tau2 = pm.HalfNormal('tau2', 5., testval=0.1)
+        tau2 = pm.Gamma('tau2', .1, .1, testval=0.1)
 
         # Construct GPs
         cov_t = sigmasq_s * pm.gp.cov.Periodic(1, 365., phi_s)
         mean_t = pm.gp.mean.Linear(coeffs=beta, intercept=alpha)
-        gp_t = pm.gp.Latent(mean_func=mean_t, cov_func=cov_t)
+        gp_period = pm.gp.Latent(mean_func=mean_t, cov_func=cov_t)
 
-        #cov_nugget = pm.gp.cov.WhiteNoise(tau2)
-        #nugget = pm.gp.Latent(cov_func=cov_nugget)
+        cov_nugget = pm.gp.cov.WhiteNoise(tau2)
+        gp_nugget = pm.gp.Latent(cov_func=cov_nugget)
 
-        s_t = gp_t.prior('gp_t', X=T[:, None]) # + nugget
-
-        u = pm.Normal('u', mu=0., sd=1., shape=prac_unique.shape[0])
-        u_i = tt.sqrt(tau2) * u
-
-        s = s_t[match(X.flatten(), T)] + u_i[match(prac_id, prac_unique)]
+        gp_t = gp_period + gp_nugget
+        s = gp_t.prior('gp_t', X=time[:, None])
 
         Y_obs = pm.Binomial('y_obs', N, pm.invlogit(s), observed=y)
 
         # Sample
-        step_u = pm.Metropolis([u])
-        step_gp_t = pm.Metropolis([s_t])
-        step_tau2 = pm.Metropolis([tau2, sigmasq_s])
-        step_beta = pm.Metropolis([alpha, beta])
         trace = pm.sample(mcmc_iter,
                           chains=1,
                           start=start,
-                          tune=500,
-                          step=[step_u, step_gp_t, step_tau2, step_beta],
-                          #max_tree_depth=6,
-                          #early_max_treedepth=4,
-                          #t0=100,
-                          #target_accept=0.99,
+                          tune=1000,
                           adapt_step_size=True)
-        # Predictions
-        s_star = gp_t.conditional('s_star', T[:, None])
-        pred = pm.sample_ppc(trace, vars=[s_star, Y_obs])
 
-        return model, trace, pred
+        # Prediction
+        time_pred -= offset
+        s_star = gp_t.conditional('s_star', time_pred[:, None])
+        pi_star = pm.Deterministic('pi_star', pm.invlogit(s_star))
+        pred = pm.sample_posterior_predictive(trace, var_names=['y_obs', 'pi_star'])
+
+        return {'model': model, 'trace': trace, 'pred': pred}
 
 
-def extractData(dat, species, condition):
+def extractData(dat, species, condition, date_range=None):
     """Extracts weekly records for 'condition' in 'species'.
 
     Parameters
@@ -120,48 +108,41 @@ def extractData(dat, species, condition):
       N     -- total number of cases seen weekly for species
 
     """
-    dat = dat.copy()[dat['Species'] == species]
-    dat.Date = pd.DatetimeIndex(dat.Date)
-    dat = dat[dat.Date > '2016-08-01']
-    dat = dat[dat.Date <= '2019-08-01']
+    if date_range is None:
+        date_range = [np.min(dat['Date']), np.max(dat['Date'])]
 
+    dat = dat[dat['Species'] == species]
+    dat['Date'] = pd.to_datetime(dat['Date'])
+    dat = dat[dat['Date'] >= date_range[0]]
+    dat = dat[dat['Date'] < date_range[1]]
 
     # Turn date into days, and quantize into weeks
-    minDate = np.min(dat.Date)
-    day = ((pd.DatetimeIndex(dat.Date) - minDate).days // 7) * 7
-    day.name = 'Day'
-    dat['day'] = day
+    dat['day'] = (dat['Date'] - __refdate) // np.timedelta64(1,'W') * 7.0 # Ensure this is float
 
-    # Calculate the earliest day for each practice
-    day0 = dat.groupby(dat['Practice_ID'])['day'].agg([['day0', np.min]])
-
-    # Now group by Practice/day combination
-    dat = dat.groupby(by=[dat['Practice_ID'], day])
-    aggTable = dat['Consult_reason'].agg([['cases', lambda x: np.sum(x == condition)],
+    # Now group by date combination
+    datgrp = dat.groupby(by='day')
+    aggTable = datgrp['Consult_reason'].agg([['cases', lambda x: np.sum(x == condition)],
                                           ['N', len]])
-    aggTable = aggTable.reset_index()
-    aggTable['date'] = [minDate + pd.Timedelta(dt, unit='D') for dt in aggTable['Day']]
-    aggTable = pd.merge(aggTable, day0, how='left', on='Practice_ID')
-    aggTable['time_since_recruitment'] = aggTable['Day'] - aggTable['day0']
-    aggTable['Practice_ID'] = aggTable['Practice_ID'].astype('category')
+    aggTable['day'] = np.array(aggTable.index)
+    aggTable.index = __refdate + pd.to_timedelta(aggTable.index, unit='D')
     return aggTable
 
 
-def predProb(y, ystar):
-    """Calculates predictive tail probability of y wrt ystar.
-
-    Parameters
-    ==========
-    y     -- a vector of length n of observed values of y
-    ystar -- a m x n matrix containing draws from the joint distribution of ystar.
-
-    Returns
-    =======
-    A vector of tail probabilities for y wrt ystar.
-    """
-    q = np.sum(y > ystar, axis=0) / ystar.shape[0]
-    q[q > .5] = 1. - q[q > .5]
-    return q
+# def predProb(y, ystar):
+#     """Calculates predictive tail probability of y wrt ystar.
+#
+#     Parameters
+#     ==========
+#     y     -- a vector of length n of observed values of y
+#     ystar -- a m x n matrix containing draws from the joint distribution of ystar.
+#
+#     Returns
+#     =======
+#     A vector of tail probabilities for y wrt ystar.
+#     """
+#     q = np.sum(y > ystar, axis=0) / ystar.shape[0]
+#     q[q > .5] = 1. - q[q > .5]
+#     return q
 
 
 if __name__ == '__main__':
@@ -192,12 +173,19 @@ if __name__ == '__main__':
             print("Running GP smoother for condition '%s' in species '%s'" % (condition, species))
             sys.stdout.write("Extracting data...")
             sys.stdout.flush()
-            d = extractData(data, species, condition)
+            d = extractData(data, species, condition, date_range=['2016-02-02','2019-12-01'])
             sys.stdout.write("done\nCalculating...")
             sys.stdout.flush()
-            res = BinomGP(np.array(d.cases), np.array(d.N),
-                          np.array(d.Day), np.array(d.Practice_ID.cat.codes), np.array(d.Day),
+
+            pred_range = pd.date_range(start='2018-02-14', end='2020-02-14', freq='W')
+            day_pred = (pred_range - __refdate) / np.timedelta64(1, 'D')
+
+            res = BinomGP(np.array(d.cases, dtype=float), np.array(d.N, dtype=float),
+                          np.array(d.day, dtype=float), np.array(day_pred, dtype=float),
                           mcmc_iter=args.iterations[0])
+            res['data'] = extractData(data, species, condition, date_range=['2018-02-14','2020-02-14'])
+            res['pred'] = pd.DataFrame(res['pred']['pi_star'])
+            res['pred'].columns = pd.Index(pred_range)
             sys.stdout.write("done\n")
             sys.stdout.flush()
             filename = "%s_%s.pkl" % (species, condition)
