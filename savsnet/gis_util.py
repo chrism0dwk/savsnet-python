@@ -54,16 +54,16 @@ def fill_raster(data, raster, band=1):
 
 
 def gen_raster(posterior, poly, filename=None,
-               summary=lambda x: np.mean(x, axis=0)):
+               summary=[['s_star', lambda x: np.mean(x, axis=0)]]):
     raster = make_masked_raster(polygon=poly, resolution=5000.,
-                                bands=1, filename=filename)
+                                bands=len(summary), filename=filename)
 
-    fill_raster(summary(posterior),
-                raster, 1)
+    for i, (name, f) in enumerate(summary):
+        fill_raster(f(posterior),
+                    raster, i)
+        raster.update_tags(i, surface=name)
 
-    raster.update_tags(1, surface='s_star')
     raster.close()
-
     return raster
 
 

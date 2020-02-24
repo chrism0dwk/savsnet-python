@@ -11,6 +11,16 @@ import pymc3 as pm
 from savsnet.logistic2D import logistic2D
 from savsnet.gis_util import gen_raster, make_masked_raster, raster2coords
 
+
+def get_mean(x):
+    return np.mean(x, axis=0)
+
+
+def get_exceed(x):
+    p = np.sum(x > 0., axis=0)/x.shape[0]
+    return (p < 0.05) | (p > 0.95)
+
+
 if __name__ == '__main__':
     import argparse
     import pickle as pkl
@@ -53,5 +63,6 @@ if __name__ == '__main__':
     with open(f"posterior_week{start}.pkl", 'wb') as f:
         pkl.dump(result, f)
         
-    gen_raster(result['posterior']['s_star'], poly, filename=f"raster_{start}.tiff")
+    gen_raster(result['posterior']['s_star'], poly, filename=f"raster_{start}.tiff",
+               summary=[['mean', get_mean], ['exceed', get_exceed]])
     sys.exit(0)
