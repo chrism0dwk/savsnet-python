@@ -40,7 +40,7 @@ def logistic2D(y, coords, knots, pred_coords):
     with model:
         alpha = pm.Normal('alpha', mu=0., sd=1.)
         sigma_sq = pm.Gamma('sigma_sq', 1., 1.)
-        phi = pm.Gamma('phi', 5., 1.)
+        phi = pm.Gamma('phi', 2., 0.1)
 
         spatial_cov = sigma_sq * pm.gp.cov.Matern32(2, phi)
         spatial_gp = pm.gp.Latent(cov_func=spatial_cov)

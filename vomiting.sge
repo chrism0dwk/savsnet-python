@@ -1,0 +1,18 @@
+#!/bin/bash
+
+#$ -j y
+#$ -cwd
+#$ -N savs-dogvom
+#$ -l gpu=1
+#$ -pe smp 8
+#$ -S /bin/bash
+
+. /etc/profile
+
+conda activate savsnet
+
+weeks=("2019-12-02" "2019-12-09" "2019-12-16" "2019-12-23" "2019-12-30" "2020-01-6" "2020-01-13" "2020-01-20" "2020-01-27" "2020-01-3" "2020-01-10")
+
+week=${weeks[$(($SGE_TASK_ID-1))]}
+python logistic_krige.py -i 5000 -s $week -p ~/GIS/gadm36_GBR.gpkg data/vomdog_17feb.csv
+
