@@ -14,7 +14,7 @@ def make_masked_raster(polygon, resolution, bands=1, all_touched=False,
     x = np.arange(polygon.bounds['minx'].values, polygon.bounds['maxx'].values, resolution)
     y = np.arange(polygon.bounds['miny'].values, polygon.bounds['maxy'].values, resolution)
     X,Y = np.meshgrid(x,y)
-    Z = np.full(X.shape, -9999.0)
+    Z = np.full(X.shape, 1.)
     transform = from_origin(x[0] - resolution/2, y[-1]+resolution/2, resolution, resolution)
 
     raster_args = {'driver': 'GTiff',
@@ -22,7 +22,7 @@ def make_masked_raster(polygon, resolution, bands=1, all_touched=False,
                    'width': Z.shape[1],
                    'count': bands,
                    'dtype': Z.dtype,
-                   'crs': crs,
+                   'crs': polygon.crs,
                    'transform': transform,
                    'nodata': nodata}
 
@@ -31,24 +31,26 @@ def make_masked_raster(polygon, resolution, bands=1, all_touched=False,
         raster = memfile.open(**raster_args)
     else:
         raster = rasterio.open(filename, 'w+', **raster_args)
-    
+
     for i in range(bands):
         raster.write(Z, i+1)
 
-    mask = rasterio.mask.mask(raster, polygon.geometry, crop=False, all_touched=all_touched)
-    raster.write_mask(mask[0][0])
+    mask = rasterio.mask.mask(raster, polygon.geometry, crop=True, all_touched=all_touched, filled=True)
+    for i in range(bands):
+        raster.write(mask[0][i], i+1)
+
     return raster
 
 
 def raster2coords(raster):
     x, y = np.meshgrid(np.arange(raster.shape[0]), np.arange(raster.shape[1]))
     coords = np.array([raster.xy(x, y) for x, y in zip(x.ravel(), y.ravel())])
-    return coords[raster.read_masks(1).T.ravel().astype(np.bool), :]
+    return coords[raster.read(1).T.ravel()!=raster.nodata, :]
 
 
 def fill_raster(data, raster, band=1):
     r = raster.read(band, masked=True).T.flatten()
-    r[~r.mask.flatten()] = data
+    r[r!=raster.nodata] = data
     r = r.reshape([raster.shape[1], raster.shape[0]]).T
     raster.write(r, band)
 
