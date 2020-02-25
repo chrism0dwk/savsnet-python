@@ -45,11 +45,11 @@ def logistic2D(y, coords, knots, pred_coords):
         spatial_cov = sigma_sq * pm.gp.cov.Matern32(2, phi)
         spatial_gp = pm.gp.Latent(cov_func=spatial_cov)
         s = spatial_gp.prior('s', X=knots)
+        s_star_ = pm.Deterministic('s_star', project(s, knots, pred_coords, spatial_cov))
 
         eta = alpha + project(s, knots, coords, spatial_cov)
         y_rv = pm.Bernoulli('y', p=pm.invlogit(eta), observed=y)
 
-        s_star_ = pm.Deterministic('s_star', project(s, knots, pred_coords, spatial_cov))
 
     def sample_fn(*args, **kwargs):
         with model:

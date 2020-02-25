@@ -14,7 +14,7 @@ def make_masked_raster(polygon, resolution, bands=1, all_touched=False,
     x = np.arange(polygon.bounds['minx'].values, polygon.bounds['maxx'].values, resolution)
     y = np.arange(polygon.bounds['miny'].values, polygon.bounds['maxy'].values, resolution)
     X,Y = np.meshgrid(x,y)
-    Z = np.ones(shape=X.shape)
+    Z = np.full(X.shape, -9999.0)
     transform = from_origin(x[0] - resolution/2, y[-1]+resolution/2, resolution, resolution)
 
     raster_args = {'driver': 'GTiff',
@@ -47,7 +47,7 @@ def raster2coords(raster):
 
 
 def fill_raster(data, raster, band=1):
-    r = raster.read(1, masked=True).T.flatten()
+    r = raster.read(band, masked=True).T.flatten()
     r[~r.mask.flatten()] = data
     r = r.reshape([raster.shape[1], raster.shape[0]]).T
     raster.write(r, band)
@@ -60,8 +60,8 @@ def gen_raster(posterior, poly, filename=None,
 
     for i, (name, f) in enumerate(summary):
         fill_raster(f(posterior),
-                    raster, i)
-        raster.update_tags(i, surface=name)
+                    raster, i+1)
+        raster.update_tags(i+1, surface=name)
 
     raster.close()
     return raster
