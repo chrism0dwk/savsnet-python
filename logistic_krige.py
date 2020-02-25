@@ -18,7 +18,7 @@ def get_mean(x):
 
 def get_exceed(x):
     p = np.sum(x > 0., axis=0)/x.shape[0]
-    return (p < 0.05) | (p > 0.95)
+    return ((p < 0.05) | (p > 0.95))*255.
 
 
 if __name__ == '__main__':

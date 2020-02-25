@@ -7,7 +7,7 @@ from rasterio.transform import from_origin
 from rasterio.plot import show
 import matplotlib.pyplot as plt
 
-def make_masked_raster(polygon, resolution, bands=1, all_touched=False, 
+def make_masked_raster(polygon, resolution, bands=1, all_touched=False,
                        nodata=-9999., crs='+init=epsg:27700', filename=None):
     """Generates a raster with points outside poly set to nodata. Pixels
     are set to be of dimension res x res"""
@@ -49,7 +49,7 @@ def raster2coords(raster):
 
 
 def fill_raster(data, raster, band=1):
-    r = raster.read(band, masked=True).T.flatten()
+    r = raster.read(band).T.flatten()
     r[r!=raster.nodata] = data
     r = r.reshape([raster.shape[1], raster.shape[0]]).T
     raster.write(r, band)
