@@ -28,6 +28,14 @@ class Data:
 
 
 def project(x_val, x_coords, x_star_coords, cov_fn):
+    """Projects a Gaussian process defined by `x_val` at `x_coords`
+       onto a set of coordinates `x_star_coords`.
+    :param x_val: values of the GP at `x_coords`
+    :param x_coords: a set of coordinates for each `x_val`
+    :param x_star_coords: a set of coordinates onto which to project the GP
+    :param cov_fn: a covariance function returning a covariance matrix given a set of coordinates
+    :returns: a vector of projected values at `x_star_coords`
+    """
     kxx = cov_fn(x_coords)
     kxxtx = matrix_inverse(stabilize(kxx))
     kxxs = tt.dot(kxxtx, x_val)
@@ -36,6 +44,37 @@ def project(x_val, x_coords, x_star_coords, cov_fn):
 
 
 def logistic2D(y, coords, knots, pred_coords):
+    """Returns an instance of a logistic geostatistical model with
+       Matern32 covariance.
+       
+       Let $y_i, i=1,\dots,n$ be a set of binary observations at locations $x_i, i=1,\dots,n$.
+       We model $y_i$ as
+       $$
+       y_i \sim Bernoulli(p_i)
+       $$
+       with
+       $$
+       \mbox{logit}(p_i) = \alpha + S(x_i).
+       $$
+       
+       $S(x_i)$ is a latent Gaussian process defined as
+       $$
+       S(\bm{x}) \sim \mbox{MultivariateNormal}(\bm{0}, \Sigma^2)
+       $$
+       where
+       $$
+       \Sigma_{ij}^2 = \sigma^2 \left(1 + \frac{\sqrt{3(x - x')^2}}{\ell}\right)
+                  \mathrm{exp}\left[ - \frac{\sqrt{3(x - x')^2}}{\ell} \right]
+       $$
+
+       The model evaluates $S(x_i)$ approximately using a set of inducing points $x^\star_i, i=1,\dots,m$ for $m$ auxilliary locations.  See [Banerjee \emph{et al.} (2009)](https://dx.doi.org/10.1111%2Fj.1467-9868.2008.00663.x) for further details.
+
+       :param y: a vector of binary outcomes {0, 1}
+       :param coords: a matrix of coordinates of `y` of shape `[n, d]` for `d`-dimensions and `n` observations.
+       :param knots: a matrix of inducing point coordinates of shape `[m, d]`.
+       :param pred_coords: a matrix of coordinates at which predictions are required.
+       :returns: a dictionary containing the PyMC3 `model`, and the `posterior` PyC3 `Multitrace` object. 
+       """
     model = pm.Model()
     with model:
         alpha = pm.Normal('alpha', mu=0., sd=1.)
