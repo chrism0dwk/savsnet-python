@@ -35,6 +35,22 @@ $ python savsnet/plot_ts_GP.py --help
 for further details.
 
 
+Spatial mapping of cases
+------------------------
+
+The `savsnet/logistic2D` module contains functions for spatial smoothing of case occurrence at point locations, using an inducing point approximation to a logistic geostatistical model with stationary mean and Matérn ($k=3/2$) covariance function.  This is called by the `logisticKrige.py` Python script such as:
+```bash
+$ python logistic_krige.py -i 5000 -s '2020-03-04' -p gadm36_GBR.gpkg myData.csv
+```
+where `myData.csv` is a CSV file containing at least the headings `consult_date` (ISO date format), `person_easting` and `person_northing` (in rectangular coordinates), and `case` (1 or 0 denoting positive or negative for a given condition).  The script runs the logistic geostatistic model, writes the posterior to a Python pickle file and the posterior mean to a GeoTIFF file.
+
+See
+```bash
+$ python logisticKrige.py --help
+```
+for information on further arguments.
+
+
 License
 -------
 
